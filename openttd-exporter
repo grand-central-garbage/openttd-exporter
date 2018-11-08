@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+
+import asyncio
+import binascii
+import logging
+import sys
+
+import openttd.admin
+import openttd.packet
+
+from prometheus_client import start_http_server, Gauge
+
+money = Gauge('openttd_money', 'Current amount of money', ['company_id'])
+income = Gauge('openttd_income', 'Current income (probably not too useful)', ['company_id'])
+loan = Gauge('openttd_loan', 'Current amount of loan', ['company_id'])
+value = Gauge('openttd_value', 'Current company value', ['company_id'])
+performance = Gauge('openttd_performance', 'Current performance of company (??)', ['company_id'])
+
+trains = Gauge('openttd_train_count', 'Current number of trains', ['company_id'])
+lorries = Gauge('openttd_lorry_count', 'Current number of lorries', ['company_id'])
+busses = Gauge('openttd_bus_count', 'Current number of busses', ['company_id'])
+planes = Gauge('openttd_plane_count', 'Current number of planes', ['company_id'])
+ships = Gauge('openttd_ship_count', 'Current number of ships', ['company_id'])
+
+train_stations = Gauge('openttd_train_station_count', 'Current number of train stations', ['company_id'])
+lorry_stations = Gauge('openttd_lorry_station_count', 'Current number of lorry stations', ['company_id'])
+bus_stations = Gauge('openttd_bus_station_count', 'Current number of bus stations', ['company_id'])
+plane_stations = Gauge('openttd_plane_station_count', 'Current number of plane stations', ['company_id'])
+ship_stations = Gauge('openttd_ship_station_count', 'Current number of ship stations', ['company_id'])
+
+def handle_client_info(info):
+    pass
+
+def handle_company_info(info):
+    pass
+
+def handle_economy_info(info):
+    money.labels(company_id=info.id).set(info.money)
+    income.labels(company_id=info.id).set(info.income)
+    loan.labels(company_id=info.id).set(info.current_loan)
+    performance.labels(company_id=info.id).set(info.performance_history[-1].performance)
+    value.labels(company_id=info.id).set(info.performance_history[-1].value)
+
+def handle_company_stats_info(info):
+    vehicle_counts = info.vehicle_counts
+    station_counts = info.station_counts
+
+    trains.labels(company_id=info.id).set(vehicle_counts[openttd.info.NetworkVehicleType.TRAIN])
+    lorries.labels(company_id=info.id).set(vehicle_counts[openttd.info.NetworkVehicleType.LORRY])
+    busses.labels(company_id=info.id).set(vehicle_counts[openttd.info.NetworkVehicleType.BUS])
+    planes.labels(company_id=info.id).set(vehicle_counts[openttd.info.NetworkVehicleType.PLANE])
+    ships.labels(company_id=info.id).set(vehicle_counts[openttd.info.NetworkVehicleType.SHIP])
+
+    train_stations.labels(company_id=info.id).set(station_counts[openttd.info.NetworkVehicleType.TRAIN])
+    lorry_stations.labels(company_id=info.id).set(station_counts[openttd.info.NetworkVehicleType.LORRY])
+    bus_stations.labels(company_id=info.id).set(station_counts[openttd.info.NetworkVehicleType.BUS])
+    plane_stations.labels(company_id=info.id).set(station_counts[openttd.info.NetworkVehicleType.PLANE])
+    ship_stations.labels(company_id=info.id).set(station_counts[openttd.info.NetworkVehicleType.SHIP])
+
+@asyncio.coroutine
+def main(loop, hostname, port, password):
+    client = openttd.admin.Client(loop=loop)
+    client.on_error = logger.error
+    try:
+        yield from client.connect_tcp(hostname, port)
+    except OSError as err:
+        print("failed to connect:", err, file=sys.stderr)
+        return
+
+    try:
+        yield from client.authenticate(
+            password,
+            "openttd-exporter",
+            "devel")
+    except:
+        logger.exception("during authentication: ")
+        return
+
+    logger.info("Connected to server: %s", client.server_info.name)
+
+    yield from client.rcon_command("unpause")
+
+    client.subscribe_callback_to_push(
+        openttd.admin.UpdateType.CLIENT_INFO,
+        handle_client_info)
+
+    client.subscribe_callback_to_push(
+        openttd.admin.UpdateType.COMPANY_INFO,
+        handle_company_info)
+
+    client.subscribe_callback_to_push(
+        openttd.admin.UpdateType.COMPANY_STATS,
+        handle_company_stats_info,
+        frequency=openttd.admin.UpdateFrequency.WEEKLY
+    )
+
+    client.subscribe_callback_to_push(
+        openttd.admin.UpdateType.COMPANY_ECONOMY,
+        handle_economy_info,
+        frequency=openttd.admin.UpdateFrequency.WEEKLY
+    )
+
+    try:
+        yield from asyncio.wait(
+            [
+                client.disconnected_event.wait()
+            ])
+    except:
+        yield from client.disconnect()
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-v",
+        dest="verbosity",
+        action="count",
+        default=0,
+        help="Increase verbosity (anything above -vvv does not make sense)"
+    )
+    parser.add_argument(
+        "hostname",
+        help="Host name to connect to"
+    )
+    parser.add_argument(
+        "port",
+        nargs="?",
+        type=int,
+        default=3977,
+        help="Port to connect to"
+    )
+    parser.add_argument(
+        "password",
+        help="Password for the administration interface."
+    )
+
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level={
+            0: logging.ERROR,
+            1: logging.WARN,
+            2: logging.INFO
+        }.get(args.verbosity, logging.DEBUG))
+
+    logging.getLogger("asyncio").setLevel(level=logging.WARN)
+
+    logger = logging.getLogger("test")
+
+
+    loop = asyncio.get_event_loop()
+    loop.set_debug(True)
+
+    start_http_server(8000)
+
+    loop.run_until_complete(main(
+        loop,
+        args.hostname,
+        args.port,
+	args.password))
