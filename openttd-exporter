@@ -15,6 +15,7 @@ income = Gauge('openttd_income', 'Current income (probably not too useful)', ['c
 loan = Gauge('openttd_loan', 'Current amount of loan', ['company_id'])
 value = Gauge('openttd_value', 'Current company value', ['company_id'])
 performance = Gauge('openttd_performance', 'Current performance of company (??)', ['company_id'])
+delivered_cargo = Gauge('openttd_delivered_cargo', 'Cargo delivered by company', ['company_id'])
 
 trains = Gauge('openttd_train_count', 'Current number of trains', ['company_id'])
 lorries = Gauge('openttd_lorry_count', 'Current number of lorries', ['company_id'])
@@ -29,19 +30,27 @@ plane_stations = Gauge('openttd_plane_station_count', 'Current number of plane s
 ship_stations = Gauge('openttd_ship_station_count', 'Current number of ship stations', ['company_id'])
 
 def handle_client_info(info):
+    logger.info("updating handle_client_info")
     pass
 
 def handle_company_info(info):
+    logger.info("updating handle_company_info")
     pass
 
 def handle_economy_info(info):
+    logger.info("updating handle_economy_info")
+
     money.labels(company_id=info.id).set(info.money)
     income.labels(company_id=info.id).set(info.income)
     loan.labels(company_id=info.id).set(info.current_loan)
-    performance.labels(company_id=info.id).set(info.performance_history[-1].performance)
-    value.labels(company_id=info.id).set(info.performance_history[-1].value)
+
+    value.labels(company_id=info.id).set(info.performance_history[0].value)
+    performance.labels(company_id=info.id).set(info.performance_history[0].performance)
+    delivered_cargo.labels(company_id=info.id).set(info.performance_history[0].delivered_cargo)
 
 def handle_company_stats_info(info):
+    logger.info("updating handle_company_stats_info")
+
     vehicle_counts = info.vehicle_counts
     station_counts = info.station_counts
 
